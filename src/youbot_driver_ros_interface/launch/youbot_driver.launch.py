@@ -14,7 +14,7 @@ def generate_launch_description():
     robot_description_path = os.path.join(
         get_package_share_directory('youbot_description'),
         'robots',
-        'youbot.urdf.xacro')
+        'youbot_arm_only.urdf.xacro')
     robot_description_config = xacro.process_file(robot_description_path)
     robot_description = {'robot_description': robot_description_config.toxml()}
 
@@ -48,7 +48,20 @@ def generate_launch_description():
             remappings=[('/base/joint_states', '/joint_states'),
                         ('arm_1/joint_states', '/joint_states')]
     )
+    # Узел запуска RViz2
+    rviz_config_path = os.path.join(
+            get_package_share_directory('youbot_driver_ros_interface'),
+            'rviz',
+            'youbot_arm.rviz')
+    rviz_node = Node(
+            package='rviz2',
+            executable='rviz2',
+            name='rviz2',
+            output='screen',
+            arguments=['-d', rviz_config_path]
+    )
     return LaunchDescription([
         robot_state_publisher_node,
-        youbot_driver_node
+        youbot_driver_node,
+        rviz_node
     ])

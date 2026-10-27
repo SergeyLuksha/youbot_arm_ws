@@ -70,6 +70,10 @@ install(DIRECTORY launch/
     DESTINATION share/${PROJECT_NAME}/launch
 )
 
+install(DIRECTORY rviz/
+    DESTINATION share/${PROJECT_NAME}/rviz
+)
+
 
 ## run sudo command to enable direct network access
 ## disabled here by default because it is set by Debian postinst command
