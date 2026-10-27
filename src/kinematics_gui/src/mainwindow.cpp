@@ -611,18 +611,19 @@ void MainWindow::updateTrajectoryExecution() {
 
 void MainWindow::joy_callback(const sensor_msgs::msg::Joy::SharedPtr msg) {
     QMetaObject::invokeMethod(this, [this, msg](){
-
         // Если управление с джойстика не включено кнопкой — ничего не делаем
         if (!joystick_control_enabled_) {
             return;
         }
-        // Статические переменные для хранения текущего декартова положения захвата
+
+        // Статические переменные для хранения текущего декартова положения захвата и угла последнего сустава
         static double target_x = 0.0;
         static double target_y = 0.0;
         static double target_z = 0.0;
+        static double target_joint_5 = 0.0;
         static bool target_initialized = false;
 
-        // При первом вызове инициализируем целевые координаты из текущего положения робота (через FK)
+        // При первом вызове инициализируем целевые координаты и угол сустава из текущего положения робота
         if (!target_initialized) {
             KDL::ChainFkSolverPos_recursive fk_solver(kdl_chain_);
             KDL::JntArray q_curr(kdl_chain_.getNrOfJoints());
@@ -634,25 +635,35 @@ void MainWindow::joy_callback(const sensor_msgs::msg::Joy::SharedPtr msg) {
                 target_x = curr_frame.p.x();
                 target_y = curr_frame.p.y();
                 target_z = curr_frame.p.z();
+                if (!current_joint_values_.empty() && current_joint_values_.size() >= 5) {
+                    target_joint_5 = current_joint_values_[4];
+                }
                 target_initialized = true;
             } else {
                 return; // Ждем, пока поступят валидные данные о суставах
             }
         }
 
-        // Коэффициент чувствительности в метрах за один цикл сообщений джойстика (например, 2 мм)
-        double cart_sensitivity = 0.001;
+        // Коэффициенты чувствительности
+        double cart_sensitivity = 0.001; // Шаг перемещения по декартовым координатам (м)
+        double joint_sensitivity = 0.05;  // Шаг вращения для последнего сочленения (рад)
 
         // Изменяем целевые декартовы координаты с помощью стиков геймпада
-        // Левый стик: оси 0 (X) и 1 (Y)
-        // Правый стик: ось 4 (Z / высота)
         target_x += msg->axes[1] * cart_sensitivity;
         target_y += msg->axes[0] * cart_sensitivity;
         target_z += msg->axes[4] * cart_sensitivity;
 
-        // Вычисляем обратную кинематику для новой точки, используя current_joint_values_ как seed
+        // Управляем поворотом последнего сочленения (индекс 4 / arm_joint_5) с помощью оси с индексом 3
+        target_joint_5 += msg->axes[3] * joint_sensitivity;
+
+        // Вычисляем обратную кинематику для новой декартовой точки
         std::vector<double> ik_joints;
         if (computeInverseKinematicsKDL(target_x, target_y, target_z, ik_joints, current_joint_values_)) {
+            // Применяем накопленный с джойстика угол для последнего сочленения
+            if (ik_joints.size() >= 5) {
+                ik_joints[4] = target_joint_5;
+            }
+
             // Если решение найдено и лимиты соблюдены — отправляем команду роботу
             auto p_msg = brics_actuator::msg::JointPositions();
             std::vector<std::string> joint_names = {
@@ -671,14 +682,15 @@ void MainWindow::joy_callback(const sensor_msgs::msg::Joy::SharedPtr msg) {
                 arm_pub_->publish(p_msg);
             }
         } else {
-            // Если точка недостижима, откатываем изменение декартовых координат назад,
-            // чтобы стик не "застревал" в недостижимой зоне
+            // Если точка недостижима, откатываем изменения координат и угла сустава назад,
+            // чтобы стики не "застревали" в недостижимой зоне
             target_x -= msg->axes[1] * cart_sensitivity;
             target_y -= msg->axes[0] * cart_sensitivity;
             target_z -= msg->axes[4] * cart_sensitivity;
+            target_joint_5 -= msg->axes[3] * joint_sensitivity;
         }
 
-        // --- Управление захватом (оставляем без изменений) ---
+        // --- Управление захватом ---
         bool gripper_changed = false;
         if (msg->buttons[0] == 1) {
             current_gripper_pos_ -= gripper_step;
@@ -706,7 +718,6 @@ void MainWindow::joy_callback(const sensor_msgs::msg::Joy::SharedPtr msg) {
             g_msg.positions.push_back(jv_r);
 
             gripper_pub_->publish(g_msg);
-
         }
     });
 }
